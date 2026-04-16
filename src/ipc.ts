@@ -27,6 +27,29 @@ export interface IpcDeps {
 
 let ipcWatcherRunning = false;
 
+/**
+ * Attempt to parse JSON, repairing common LLM formatting errors.
+ * Agents sometimes produce malformed JSON (missing colons, trailing commas).
+ */
+function tryParseJson(raw: string): unknown {
+  // Try strict parse first
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // ignore — try repairs below
+  }
+
+  let repaired = raw;
+
+  // Fix missing colon between key and value: "key""value" or "key"/value
+  repaired = repaired.replace(/"(\w+)"(?=\s*["{/\[])/g, '"$1":');
+
+  // Remove trailing commas before } or ]
+  repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+
+  return JSON.parse(repaired); // let it throw if still invalid
+}
+
 export function startIpcWatcher(deps: IpcDeps): void {
   if (ipcWatcherRunning) {
     logger.debug('IPC watcher already running, skipping duplicate start');
@@ -73,7 +96,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
           for (const file of messageFiles) {
             const filePath = path.join(messagesDir, file);
             try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              const data = tryParseJson(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
               if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
@@ -124,7 +147,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
           for (const file of taskFiles) {
             const filePath = path.join(tasksDir, file);
             try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              const data = tryParseJson(fs.readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
               // Pass source group identity to processTaskIpc for authorization
               await processTaskIpc(data, sourceGroup, isMain, deps);
               fs.unlinkSync(filePath);
